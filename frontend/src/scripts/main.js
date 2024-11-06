@@ -17,31 +17,78 @@ let scoreDisplayElement, levelDisplayElement;
 let fallingInterval;
 let ws;
 let playerId = null;
-let opponentGameState = { board: [], tetromino: [] };
+let roomId = null;
+let opponentGameState = { board: Array(GRID_WIDTH * GRID_HEIGHT).fill(0), tetromino: [] };
 
 document.addEventListener('DOMContentLoaded', () => {
     const welcomeMessage = document.getElementById('welcome-message');
     const gameCanvas = document.getElementById('gameCanvas');
+    const gameContainer = document.getElementById('game-container');
     const startButton = document.getElementById('startButton');
+    const startGameButton = document.getElementById('startGameButton');
+    const roomListContainer = document.getElementById('room-list');
 
-    startButton.addEventListener('click', () => {
+    startButton.addEventListener('click', createRoom);
+    startGameButton.addEventListener('click', startGame);
+
+    loadRoomList();
+
+    function loadRoomList() {
+        fetch('http://localhost:8080/rooms')
+            .then(response => response.json())
+            .then(rooms => {
+                roomListContainer.innerHTML = rooms.map(room => 
+                    `<div>
+                        Room: ${room.roomId} - Players: ${room.players}
+                        <button onclick="joinRoom('${room.roomId}')">Join</button>
+                    </div>`
+                ).join('');
+            });
+    }
+
+    function createRoom() {
+        fetch('http://localhost:8080/create-room', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                roomId = data.roomId;
+                connectWebSocket(roomId);
+                welcomeMessage.style.display = 'none';
+                gameContainer.style.display = 'block';
+                gameCanvas.style.display = 'block';
+                startButton.style.display = 'none';
+                startGameButton.style.display = 'block';
+            });
+    }
+
+    window.joinRoom = function(id) {
+        roomId = id;
+        connectWebSocket(roomId);
         welcomeMessage.style.display = 'none';
+        gameContainer.style.display = 'block';
         gameCanvas.style.display = 'block';
-        initiateGame();
-        startButton.style.borderRadius = "0px 0px 5px 5px";
-    });
+        startButton.style.display = 'none';
+        startGameButton.style.display = 'block';
+    };
 
-    ws = new WebSocket('ws://localhost:8080');
+    function startGame() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'gameStart' }));
+        }
+    }
+});
+
+function connectWebSocket(roomId) {
+    ws = new WebSocket(`ws://localhost:8080/?roomId=${roomId}`);
     ws.onmessage = handleMessage;
 
     ws.onopen = () => {
-        console.log('Connected to WebSocket server');
+        console.log(`Connected to WebSocket server in room ${roomId}`);
     };
 
     ws.onclose = () => {
         console.log('Disconnected from WebSocket server');
     };
-});
+}
 
 Module.onRuntimeInitialized = function() {
     drawingCanvas = document.getElementById('gameCanvas');
@@ -65,6 +112,12 @@ function initiateGame() {
     resetGameState();
     startFallingInterval();
     requestAnimationFrame(gameRenderLoop);
+
+    ws.send(JSON.stringify({
+        type: 'gameStart',
+        playerId: playerId,
+        roomId: roomId
+    }));
 }
 
 function resetGameState() {
@@ -100,6 +153,7 @@ function gameRenderLoop() {
 function processGameOver() {
     clearInterval(fallingInterval);
     drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+    ws.send(JSON.stringify({ type: 'gameOver', playerId: playerId }));
     alert("Game Over! Final Score: " + Module.ccall('getScore', 'number'));
 }
 
@@ -183,10 +237,11 @@ function generateTetromino() {
 }
 
 function sendPlayerMove(move) {
-    if (playerId !== null) {
+    if (playerId !== null && roomId !== null) {
         ws.send(JSON.stringify({
             type: 'playerMove',
             playerId: playerId,
+            roomId: roomId,
             move: move,
             board: Array.from(Module.HEAP32.subarray(boardPointer >> 2, (boardPointer >> 2) + (GRID_WIDTH * GRID_HEIGHT))),
             tetromino: getTetrominoData()
@@ -214,13 +269,16 @@ function getTetrominoData() {
     return tetromino;
 }
 
+let gameStarted = false;
+
 function handleMessage(event) {
     const data = JSON.parse(event.data);
-    
+
     switch (data.type) {
         case 'welcome':
             playerId = data.playerId;
-            console.log(`Welcome Player ${playerId}`);
+            roomId = data.roomId;
+            console.log(`Welcome Player ${playerId} in Room ${roomId}`);
             break;
 
         case 'gameState':
@@ -235,9 +293,26 @@ function handleMessage(event) {
             handleGameMove(data);
             break;
 
+        case 'gameStart':
+            if (!gameStarted) {
+                gameStarted = true;
+                initiateGame();
+            }
+            break;
+
+        case 'gameOver':
+            processGameOver(data.winner);
+            break;
+
         default:
             console.error('Unknown message type:', data.type);
     }
+}
+
+function processGameOver(winnerId) {
+    clearInterval(fallingInterval);
+    drawingContext.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+    alert(`Game Over! ${winnerId === playerId ? 'You win!' : 'You lose!'} Final Score: ${Module.ccall('getScore', 'number')}`);
 }
 
 function handleGameMove(data) {
@@ -249,8 +324,8 @@ function handleGameMove(data) {
 }
 
 function initializeGameState(state) {
-    opponentGameState = state; 
-    renderOpponentBoard(); 
+    opponentGameState = state;
+    renderOpponentBoard();
 }
 
 function updateGameState(data) {
@@ -286,31 +361,5 @@ function initializeKeyControls() {
                 break;
         }
     });
-}
-
-function handleMessage(event) {
-    const data = JSON.parse(event.data);
-
-    switch (data.type) {
-        case 'welcome':
-            playerId = data.playerId;
-            console.log(`Welcome Player ${playerId}`);
-            break;
-
-        case 'gameState':
-            initializeGameState(data.state);
-            break;
-
-        case 'gameStateUpdate':
-            updateGameState(data);
-            break;
-
-        case 'playerMove':
-            handleGameMove(data);
-            break;
-
-        default:
-            console.error('Unknown message type:', data.type);
-    }
 }
 

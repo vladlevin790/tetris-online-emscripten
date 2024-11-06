@@ -7,15 +7,23 @@
     <link rel="stylesheet" href="./src/styles/styles.css"> 
 </head>
 <body>
-    <div id="welcome-message">Hello, it's Tetris game! Press the Start button to enjoy.</div>
-    <h1>Tetris Game</h1>
-    <div id="game-container">
+    <div id="welcome-message">
+        <h1>Tetris Game</h1>
+        <div id="room-list-container">
+            <h2>Available Rooms</h2>
+            <div id="room-list"></div>
+        </div>
+        <button id="startButton">Create Room</button>
+    </div>
+
+    <div id="game-container" style="display: none;">
         <div id="score">Score: 0</div>
         <div id="level">Level: 1</div>
         <canvas id="gameCanvas" width="200" height="400" style="display: none;"></canvas> 
-        <canvas id="opponentCanvas" width="200" height="400" ></canvas>
-        <button id="startButton">Start Game</button>
+        <canvas id="opponentCanvas" width="200" height="400"></canvas>
+        <button id="startGameButton">Start Game</button>
     </div>
+
     <script src="./src/scripts/tetris.js"></script>
     <script src="./src/scripts/main.js"></script>
 </body>

@@ -2,34 +2,69 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
+const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+const GRID_WIDTH = 10;
+const GRID_HEIGHT = 20;
 
-let players = []; 
-let currentGameState = {};
+let rooms = new Map();
 
+app.use(cors());
 app.use(express.static(path.join(__dirname, '../frontend')));
 
-wss.on('connection', (ws) => {
-    console.log('New player connected');
-    const playerId = players.length + 1;
-    players.push({ id: playerId, ws });
+app.get('/rooms', (req, res) => {
+    const roomList = Array.from(rooms.keys()).map(roomId => {
+        const room = rooms.get(roomId);
+        return {
+            roomId,
+            players: room.players.length
+        };
+    }).filter(room => room.players < 2); 
+    res.json(roomList);
+});
 
-    ws.send(JSON.stringify({ type: 'welcome', playerId }));
-    ws.send(JSON.stringify({ type: 'gameState', state: currentGameState }));
+app.post('/create-room', (req, res) => {
+    const newRoomId = `room_${rooms.size + 1}`;
+    rooms.set(newRoomId, { players: [], gameState: { board: Array(GRID_WIDTH * GRID_HEIGHT).fill(0), tetromino: [] }, gameStarted: false });
+    res.json({ roomId: newRoomId });
+});
+
+wss.on('connection', (ws, req) => {
+    const roomId = new URLSearchParams(req.url.split('?')[1]).get('roomId');
+
+    if (!rooms.has(roomId)) {
+        ws.close();
+        return;
+    }
+
+    const room = rooms.get(roomId);
+    const playerId = room.players.length + 1;
+    room.players.push({ id: playerId, ws });
+
+    ws.send(JSON.stringify({ type: 'welcome', playerId, roomId }));
+    ws.send(JSON.stringify({ type: 'gameState', state: room.gameState }));
 
     ws.on('message', (message) => {
         const data = JSON.parse(message);
-        
+
         switch (data.type) {
+            case 'gameStart':
+                handleGameStart(ws, roomId);
+                break;
+
             case 'gameStateUpdate':
-                broadcastGameState(data, ws);
+                broadcastGameState(data, ws, roomId);
                 break;
 
             case 'playerMove':
-                handlePlayerMove(data, ws);
+                handlePlayerMove(data, ws, roomId);
+                break;
+
+            case 'gameOver':
+                handleGameOver(data, roomId);
                 break;
 
             default:
@@ -40,25 +75,60 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         console.log('Player disconnected');
-        players = players.filter(player => player.ws !== ws);
+        room.players = room.players.filter(player => player.ws !== ws);
+        if (room.players.length === 0) {
+            rooms.delete(roomId); 
+        }
     });
 });
 
-function broadcastGameState(data, senderWs) {
-    currentGameState = { ...currentGameState, ...data };
+function handleGameStart(ws, roomId) {
+    const room = rooms.get(roomId);
+    if (!room.gameStarted) {
+        room.gameStarted = true;
 
-    players.forEach(player => {
+        room.players.forEach(player => {
+            if (player.ws.readyState === WebSocket.OPEN) {
+                player.ws.send(JSON.stringify({ type: 'gameStart' }));
+            }
+        });
+    }
+}
+
+function broadcastGameState(data, senderWs, roomId) {
+    const room = rooms.get(roomId);
+    room.gameState = { ...room.gameState, ...data };
+
+    room.players.forEach(player => {
         if (player.ws !== senderWs && player.ws.readyState === WebSocket.OPEN) {
             player.ws.send(JSON.stringify(data));
         }
     });
 }
 
-function handlePlayerMove(data, senderWs) {
-    const senderPlayer = players.find(player => player.ws === senderWs);
+function handlePlayerMove(data, senderWs, roomId) {
+    const room = rooms.get(roomId);
+    const senderPlayer = room.players.find(player => player.ws === senderWs);
     data.playerId = senderPlayer.id;
+    data.type = 'playerMove';
 
-    broadcastGameState(data, senderWs);
+    broadcastGameState(data, senderWs, roomId);
+}
+
+function handleGameOver(data, roomId) {
+    const room = rooms.get(roomId);
+    const winner = room.players.find(player => player.id !== data.playerId);
+
+    room.players.forEach(player => {
+        if (player.ws.readyState === WebSocket.OPEN) {
+            player.ws.send(JSON.stringify({
+                type: 'gameOver',
+                winner: winner ? winner.id : null
+            }));
+        }
+    });
+    room.gameStarted = false;
+    room.gameState = { board: Array(GRID_WIDTH * GRID_HEIGHT).fill(0), tetromino: [] };
 }
 
 server.listen(8080, () => {

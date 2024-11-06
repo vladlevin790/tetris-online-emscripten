@@ -28,6 +28,34 @@ h1 {
     text-align: center;
 }
 
+#room-list-container {
+    margin-bottom: 20px;
+}
+
+#room-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.room-item {
+    background-color: #444;
+    border: 2px solid #f4a261;
+    padding: 10px;
+    border-radius: 5px;
+    width: 100%;
+    max-width: 600px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.room-item button {
+    margin-left: 10px;
+}
+
 #game-container {
     display: flex;
     flex-direction: column;
