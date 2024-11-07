@@ -12,7 +12,12 @@ const GRID_HEIGHT = 20;
 
 let rooms = new Map();
 
-app.use(cors());
+app.use(cors({
+    origin: "*",
+    methods: ['GET','POST']
+}));
+
+
 app.use(express.static(path.join(__dirname, '../frontend')));
 
 app.get('/rooms', (req, res) => {
@@ -28,7 +33,7 @@ app.get('/rooms', (req, res) => {
 
 app.post('/create-room', (req, res) => {
     const newRoomId = `room_${rooms.size + 1}`;
-    rooms.set(newRoomId, { players: [], gameState: { board: Array(GRID_WIDTH * GRID_HEIGHT).fill(0), tetromino: [] }, gameStarted: false });
+    rooms.set(newRoomId, { players: [], gameState: { board: Array(GRID_WIDTH * GRID_HEIGHT).fill(0), tetromino: [] }, gameStarted: false, playerScores: {} });
     res.json({ roomId: newRoomId });
 });
 
@@ -49,7 +54,7 @@ wss.on('connection', (ws, req) => {
 
     ws.on('message', (message) => {
         const data = JSON.parse(message);
-
+        console.log(`Received message of type: ${data.type} from player ${data.playerId}`);
         switch (data.type) {
             case 'gameStart':
                 handleGameStart(ws, roomId);
@@ -64,6 +69,7 @@ wss.on('connection', (ws, req) => {
                 break;
 
             case 'gameOver':
+                console.log('Handling game over');
                 handleGameOver(data, roomId);
                 break;
 
@@ -77,7 +83,7 @@ wss.on('connection', (ws, req) => {
         console.log('Player disconnected');
         room.players = room.players.filter(player => player.ws !== ws);
         if (room.players.length === 0) {
-            rooms.delete(roomId); 
+            rooms.delete(roomId);
         }
     });
 });
@@ -117,20 +123,37 @@ function handlePlayerMove(data, senderWs, roomId) {
 
 function handleGameOver(data, roomId) {
     const room = rooms.get(roomId);
-    const winner = room.players.find(player => player.id !== data.playerId);
+    room.playerScores[data.playerId] = { score: data.score, level: data.level };
 
-    room.players.forEach(player => {
-        if (player.ws.readyState === WebSocket.OPEN) {
-            player.ws.send(JSON.stringify({
-                type: 'gameOver',
-                winner: winner ? winner.id : null
-            }));
-        }
-    });
-    room.gameStarted = false;
-    room.gameState = { board: Array(GRID_WIDTH * GRID_HEIGHT).fill(0), tetromino: [] };
+    const allPlayersScores = Object.values(room.playerScores);
+    console.log(allPlayersScores);
+    if (allPlayersScores.length === 2) { 
+        const player1 = room.players[0];
+        const player2 = room.players[1];
+        
+        const player1Score = room.playerScores[player1.id].score;
+        const player2Score = room.playerScores[player2.id].score;
+
+        const winner = player1Score > player2Score ? player1.id : player2.id;
+
+        room.players.forEach(player => {
+            if (player.ws.readyState === WebSocket.OPEN) {
+                player.ws.send(JSON.stringify({
+                    type: 'gameOver',
+                    winner: winner,
+                    scores: room.playerScores
+                }));
+            }
+        });
+
+        room.gameStarted = false;
+        room.gameState = { board: Array(GRID_WIDTH * GRID_HEIGHT).fill(0), tetromino: [] };
+        room.playerScores = {};
+    }
 }
 
 server.listen(8080, () => {
     console.log('Server is listening on port 8080');
 });
+
+//TODO: fix end of game, 
